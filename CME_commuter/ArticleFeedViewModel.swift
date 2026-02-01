@@ -6,8 +6,31 @@ final class ArticleFeedViewModel: ObservableObject {
     @Published var articles: [Article] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var searchQuery: String = ""
+    @Published var isPlaying = false
+    @Published var currentlyPlayingTitle: String?
 
-    private let speechSynthesizer = SpeechSynthesizer()
+    let speechSynthesizer = SpeechSynthesizer()
+
+    var filteredArticles: [Article] {
+        guard !searchQuery.isEmpty else { return articles }
+        let query = searchQuery.lowercased()
+        return articles.filter { article in
+            article.title.lowercased().contains(query) ||
+            article.summary.lowercased().contains(query)
+        }
+    }
+
+    init() {
+        speechSynthesizer.onPlaybackStateChanged = { [weak self] playing in
+            Task { @MainActor in
+                self?.isPlaying = playing
+                if !playing {
+                    self?.currentlyPlayingTitle = nil
+                }
+            }
+        }
+    }
 
     func refresh() async {
         guard !isLoading else { return }
@@ -28,7 +51,55 @@ final class ArticleFeedViewModel: ObservableObject {
     }
 
     func speakSummary(for article: Article) {
+        currentlyPlayingTitle = article.title
         speechSynthesizer.speak(article.summary)
+    }
+
+    func stopPlayback() {
+        speechSynthesizer.stop()
+        currentlyPlayingTitle = nil
+    }
+
+    func pausePlayback() {
+        speechSynthesizer.pause()
+    }
+
+    func resumePlayback() {
+        speechSynthesizer.resume()
+    }
+
+    func searchArticles(for topic: String) -> [Article] {
+        guard !topic.isEmpty else { return articles }
+        let query = topic.lowercased()
+        return articles.filter { article in
+            article.title.lowercased().contains(query) ||
+            article.summary.lowercased().contains(query)
+        }
+    }
+
+    func speakTopicBrief(for topic: String) {
+        let matchingArticles = searchArticles(for: topic)
+
+        if matchingArticles.isEmpty {
+            let noResults = "No articles found matching '\(topic)'. Try a different topic or check recent articles."
+            currentlyPlayingTitle = "Topic: \(topic)"
+            speechSynthesizer.speak(noResults)
+            return
+        }
+
+        var brief = "Here's your brief on \(topic). "
+        brief += "I found \(matchingArticles.count) related article\(matchingArticles.count == 1 ? "" : "s"). "
+
+        for (index, article) in matchingArticles.prefix(3).enumerated() {
+            brief += "Article \(index + 1): \(article.title). \(article.summary) "
+        }
+
+        if matchingArticles.count > 3 {
+            brief += "There are \(matchingArticles.count - 3) more articles available on this topic."
+        }
+
+        currentlyPlayingTitle = "Topic: \(topic)"
+        speechSynthesizer.speak(brief)
     }
 
     private func fetchArticles(from source: ArticleSource) async throws -> [Article] {
